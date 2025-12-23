@@ -1,14 +1,22 @@
 import sys
+import os
+import ctypes
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QFileDialog, QColorDialog,
-    QToolBar, QSpinBox, QLabel
+    QApplication, QMainWindow, QWidget, QToolBar,
+    QSpinBox, QLabel, QFileDialog, QColorDialog, QHBoxLayout, QVBoxLayout, QPushButton
 )
-from PySide6.QtGui import (
-    QPainter, QPen, QColor, QPixmap, QAction, QCursor, QIcon
-)
+from PySide6.QtGui import QPainter, QPen, QColor, QPixmap, QCursor, QIcon, QAction, QFont
 from PySide6.QtCore import Qt, QPoint, QRect
 
-# ---------- Tools ----------
+APP_NAME = "GM-PENCIL"
+APP_ID = "com.gm.pencil.ultimate.2025"
+
+# Taskbar icon fix
+try:
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
+except:
+    pass
+
 class Tool:
     PEN = "Pen"
     ERASER = "Eraser"
@@ -16,30 +24,24 @@ class Tool:
     RECT = "Rectangle"
     ELLIPSE = "Ellipse"
 
-# ---------- Canvas ----------
 class Canvas(QWidget):
     def __init__(self):
         super().__init__()
         self.setMinimumSize(1000, 600)
         self.setCursor(Qt.CrossCursor)
-
         self.pixmap = QPixmap(self.size())
         self.pixmap.fill(Qt.white)
-
         self.history = []
         self.redo_stack = []
-
         self.pen_color = QColor("#000000")
         self.pen_size = 4
         self.tool = Tool.PEN
-
         self.start_point = QPoint()
         self.last_point = QPoint()
-
         self.setStyleSheet("""
-            background-color: #1e1e1e;
-            border: 2px solid #333;
-            border-radius: 12px;
+            background-color:#1e1e1e;
+            border:2px solid #333;
+            border-radius:12px;
         """)
 
     def resizeEvent(self, event):
@@ -63,10 +65,9 @@ class Canvas(QWidget):
     def mouseMoveEvent(self, event):
         if event.buttons() & Qt.LeftButton:
             painter = QPainter(self.pixmap)
-            pen = QPen(self.pen_color, self.pen_size) if self.tool != Tool.ERASER else QPen(Qt.white, self.pen_size * 3)
+            pen = QPen(self.pen_color, self.pen_size if self.tool != Tool.ERASER else self.pen_size*3)
             pen.setCapStyle(Qt.RoundCap)
             painter.setPen(pen)
-
             current = event.position().toPoint()
             if self.tool in (Tool.PEN, Tool.ERASER):
                 painter.drawLine(self.last_point, current)
@@ -77,14 +78,12 @@ class Canvas(QWidget):
         painter = QPainter(self.pixmap)
         painter.setPen(QPen(self.pen_color, self.pen_size))
         end = event.position().toPoint()
-
         if self.tool == Tool.LINE:
             painter.drawLine(self.start_point, end)
         elif self.tool == Tool.RECT:
             painter.drawRect(QRect(self.start_point, end))
         elif self.tool == Tool.ELLIPSE:
             painter.drawEllipse(QRect(self.start_point, end))
-
         self.update()
 
     def save_state(self):
@@ -124,114 +123,115 @@ class Canvas(QWidget):
                 self.pixmap = loaded.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
                 self.update()
 
-# ---------- Main Window ----------
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-
-        self.setWindowTitle("GM-PENCIL")
-        self.setWindowIcon(QIcon("logo.ico"))
+        self.setWindowTitle(APP_NAME)
+        self.icon = QIcon("logo.ico")
+        self.setWindowIcon(self.icon)
         self.resize(1400, 800)
 
         self.canvas = Canvas()
         self.setCentralWidget(self.canvas)
 
-        self.status = QLabel("Ready")
+        self.status = QLabel("Tool: Pen | Size: 4 | Color: #000000")
         self.statusBar().addWidget(self.status)
 
         self.init_toolbar()
-        self.apply_dark_theme()
+        self.apply_modern_theme()
 
     def init_toolbar(self):
-        bar = QToolBar("Tools")
+        bar = QToolBar()
         bar.setMovable(False)
-        self.addToolBar(bar)
+        bar.setStyleSheet("background:#1f1f1f; border-bottom:1px solid #333;")
+        self.addToolBar(Qt.TopToolBarArea, bar)
 
-        def add_action(name, func, tooltip=""):
-            a = QAction(name, self)
-            if tooltip:
-                a.setToolTip(tooltip)
-            a.triggered.connect(func)
-            bar.addAction(a)
-
-        # Tools
-        add_action("✏ Pen", lambda: self.set_tool(Tool.PEN), "Draw with pen")
-        add_action("🧽 Eraser", lambda: self.set_tool(Tool.ERASER), "Erase content")
-        add_action("📏 Line", lambda: self.set_tool(Tool.LINE), "Draw a line")
-        add_action("⬛ Rect", lambda: self.set_tool(Tool.RECT), "Draw rectangle")
-        add_action("⚪ Ellipse", lambda: self.set_tool(Tool.ELLIPSE), "Draw ellipse")
+        # Tool Buttons
+        self.tool_buttons = {}
+        tools = [
+            ("✏", Tool.PEN), ("🧽", Tool.ERASER),
+            ("📏", Tool.LINE), ("⬛", Tool.RECT), ("⚪", Tool.ELLIPSE)
+        ]
+        for icon, tool in tools:
+            btn = QPushButton(icon)
+            btn.setCheckable(True)
+            btn.clicked.connect(lambda checked, t=tool: self.set_tool(t))
+            btn.setStyleSheet(self.button_style())
+            bar.addWidget(btn)
+            self.tool_buttons[tool] = btn
 
         bar.addSeparator()
 
-        # Actions
-        add_action("🎨 Color", self.pick_color, "Pick pen color")
-        add_action("↩ Undo", self.canvas.undo, "Undo last action")
-        add_action("↪ Redo", self.canvas.redo, "Redo last undone")
-        add_action("🧹 Clear", self.canvas.clear, "Clear canvas")
-        add_action("📂 Open", self.canvas.open_image, "Open image")
-        add_action("💾 Save", self.canvas.save_image, "Save image")
+        # Color Picker
+        color_btn = QPushButton("🎨")
+        color_btn.clicked.connect(self.pick_color)
+        color_btn.setStyleSheet(self.button_style())
+        bar.addWidget(color_btn)
 
-        # Brush size
-        size_box = QSpinBox()
-        size_box.setRange(1, 60)
-        size_box.setValue(self.canvas.pen_size)
-        size_box.valueChanged.connect(self.set_size)
-        bar.addWidget(size_box)
+        # Undo/Redo/Clear/Open/Save
+        actions = [
+            ("↩", self.canvas.undo), ("↪", self.canvas.redo),
+            ("🧹", self.canvas.clear), ("📂", self.canvas.open_image),
+            ("💾", self.canvas.save_image)
+        ]
+        for icon, func in actions:
+            btn = QPushButton(icon)
+            btn.clicked.connect(func)
+            btn.setStyleSheet(self.button_style())
+            bar.addWidget(btn)
+
+        # Brush Size
+        self.size_box = QSpinBox()
+        self.size_box.setRange(1, 60)
+        self.size_box.setValue(self.canvas.pen_size)
+        self.size_box.valueChanged.connect(self.set_size)
+        self.size_box.setStyleSheet("""
+            QSpinBox { background:#2a2a2a; color:#fff; border-radius:6px; padding:2px 6px; min-width:50px;}
+        """)
+        bar.addWidget(self.size_box)
+
+        self.update_tool_buttons()
+
+    def button_style(self):
+        return """
+            QPushButton {
+                background:#2a2a2a; color:#fff; border-radius:8px; font-size:16px;
+                padding:6px;
+            }
+            QPushButton:hover { background:#3a3a3a; }
+            QPushButton:checked { background:#1a73e8; }
+        """
 
     def set_tool(self, tool):
         self.canvas.tool = tool
-        self.status.setText(f"Tool: {tool}")
+        self.update_tool_buttons()
+        self.update_status()
 
-        cursors = {
-            Tool.PEN: Qt.CrossCursor,
-            Tool.ERASER: Qt.PointingHandCursor,
-            Tool.LINE: Qt.CrossCursor,
-            Tool.RECT: Qt.CrossCursor,
-            Tool.ELLIPSE: Qt.CrossCursor,
-        }
-        self.canvas.setCursor(QCursor(cursors[tool]))
+    def update_tool_buttons(self):
+        for t, btn in self.tool_buttons.items():
+            btn.setChecked(self.canvas.tool == t)
 
     def set_size(self, size):
         self.canvas.pen_size = size
-        self.status.setText(f"Brush Size: {size}")
+        self.update_status()
 
     def pick_color(self):
         color = QColorDialog.getColor()
         if color.isValid():
             self.canvas.pen_color = color
-            self.status.setText(f"Color: {color.name()}")
+            self.update_status()
 
-    def apply_dark_theme(self):
+    def update_status(self):
+        self.status.setText(f"Tool: {self.canvas.tool} | Size: {self.canvas.pen_size} | Color: {self.canvas.pen_color.name()}")
+
+    def apply_modern_theme(self):
         self.setStyleSheet("""
-            QMainWindow {
-                background-color: #121212;
-                color: #ffffff;
-            }
-            QToolBar {
-                background: #1f1f1f;
-                spacing: 8px;
-                padding: 6px;
-            }
-            QToolButton {
-                background: #2a2a2a;
-                border-radius: 8px;
-                padding: 6px 10px;
-            }
-            QToolButton:hover {
-                background: #3a3a3a;
-            }
-            QSpinBox {
-                background: #2a2a2a;
-                border-radius: 6px;
-                padding: 4px;
-                color: #ffffff;
-            }
-            QStatusBar {
-                background: #1f1f1f;
-            }
+            QMainWindow { background-color:#121212; color:#ffffff; }
+            QToolBar { background:#1f1f1f; spacing:6px; padding:4px; }
+            QSpinBox { background:#2a2a2a; color:#fff; border-radius:6px; padding:2px 6px; }
+            QStatusBar { background:#1f1f1f; padding:4px; color:#ccc; }
         """)
 
-# ---------- Run ----------
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setWindowIcon(QIcon("logo.ico"))
